@@ -1,0 +1,75 @@
+# Ambiente virtual
+
+venv/
+.venv/
+env/
+
+# Variáveis de ambiente
+
+# .env
+# .env.*
+# !.env.example
+
+# Cache Python
+
+**pycache**/
+*.py[cod]
+*$py.class
+
+# Arquivos compilados
+
+*.so
+*.pyd
+*.dll
+
+# Build/distribuição
+
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# PyInstaller
+
+*.spec
+
+# Logs
+
+*.log
+logs/
+
+# Testes e cobertura
+
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Type checkers / linters
+
+.mypy_cache/
+.ruff_cache/
+
+# VS Code
+
+.vscode/
+
+# PyCharm
+
+.idea/
+
+# Sistema operacional
+
+.DS_Store
+Thumbs.db
+
+# Arquivos temporários
+
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# Jupyter
+
+.ipynb_checkpoints/
