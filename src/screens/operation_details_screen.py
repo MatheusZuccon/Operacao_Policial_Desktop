@@ -144,6 +144,7 @@ class OperationDetailsScreen(tk.Toplevel):
                 wraplength=420, justify=tk.LEFT,
             ).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
+        info_row("Número da Operação:", op.operation_number or "—")
         info_row("Localização:", op.location)
         info_row("Data de Criação:", format_datetime(op.created_at or ""))
         info_row("Tipo:", OPERATION_TYPES.get(op.operation_type, op.operation_type))
@@ -173,16 +174,30 @@ class OperationDetailsScreen(tk.Toplevel):
                 padx=10, pady=8, wraplength=560,
             ).pack(fill=tk.X)
 
-        resource_section("🔫 Armamentos", list_to_bullet(op.weapons))
-        resource_section(
-            "🚗 Viaturas",
-            "\n".join(
-                f"• {v.name.capitalize()}{'  [Blindada]' if v.armored else ''}"
-                for v in op.vehicles
-            ) or "Nenhuma",
-        )
-        resource_section("👮 Cargos", list_to_bullet(op.roles))
-        resource_section("🔬 Equipamentos Investigativos", list_to_bullet(op.investigation_equipments))
+        weapons_str = "\n".join(
+            f"• {w.weapon.capitalize()} (Quantidade: {w.quantity})"
+            for w in op.weapons
+        ) if op.weapons else "Nenhum"
+        resource_section("🔫 Armamentos", weapons_str)
+
+        vehicles_str = "\n".join(
+            f"• {v.brand} {v.model}  [Placa: {v.plate}]{'  [Blindada]' if v.armored else ''}"
+            for v in op.vehicles
+        ) if op.vehicles else "Nenhuma"
+        resource_section("🚗 Viaturas", vehicles_str)
+
+        roles_str = ""
+        for r in op.roles:
+            officers_str = ", ".join(r.officers) if r.officers else "Nenhum policial"
+            roles_str += f"• {r.role.capitalize()} (Qtd: {r.quantity})\n  Policiais: {officers_str}\n"
+        roles_str = roles_str.strip() if roles_str else "Nenhum"
+        resource_section("👮 Cargos", roles_str)
+
+        equips_str = "\n".join(
+            f"• {e.equipment.capitalize()} (Quantidade: {e.quantity})"
+            for e in op.investigation_equipments
+        ) if op.investigation_equipments else "Nenhum"
+        resource_section("🔬 Equipamentos Investigativos", equips_str)
 
         # bottom spacer
         tk.Frame(parent, bg=COLORS["bg_content"], height=16).pack()

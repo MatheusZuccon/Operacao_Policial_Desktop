@@ -1,5 +1,6 @@
 import threading
 import tkinter as tk
+import re
 from tkinter import messagebox
 import ttkbootstrap as ttk
 from ttkbootstrap.scrolled import ScrolledFrame
@@ -38,12 +39,13 @@ class _SectionLabel(tk.Label):
         )
 
 
-class _CheckboxList(tk.Frame):
-    """Scrollable list of Checkbuttons for selecting multiple string items."""
+class _CheckboxQuantityList(tk.Frame):
+    """Scrollable list of items with checkboxes and quantities (1 to 99)."""
 
-    def __init__(self, parent: tk.Widget, items: list[str], height: int = 130, **kw) -> None:
+    def __init__(self, parent: tk.Widget, items: list[str], height: int = 150, **kw) -> None:
         super().__init__(parent, bg=COLORS["bg_section"], relief=tk.FLAT, **kw)
-        self._vars: dict[str, tk.BooleanVar] = {}
+        self._items = items
+        self._entries: dict[str, tuple[tk.BooleanVar, tk.StringVar, ttk.Entry, tk.Checkbutton]] = {}
         self._build(items, height)
 
     def _build(self, items: list[str], height: int) -> None:
@@ -64,16 +66,27 @@ class _CheckboxList(tk.Frame):
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Bind mousewheel to canvas
         canvas.bind("<MouseWheel>", lambda e: canvas.yview_scroll(-1 * (e.delta // 120), "units"))
 
-        cols = 2
-        for i, item in enumerate(items):
+        for item in items:
+            row_frame = tk.Frame(inner, bg=COLORS["bg_section"])
+            row_frame.pack(fill=tk.X, expand=True, padx=8, pady=4)
+
             var = tk.BooleanVar(value=False)
-            self._vars[item] = var
-            row, col = divmod(i, cols)
+            qty_var = tk.StringVar(value="1")
+
+            # Max 2 digits constraint for quantity
+            def enforce_qty(*args, qvar=qty_var):
+                val = qvar.get()
+                digits = "".join(c for c in val if c.isdigit())
+                if len(digits) > 2:
+                    digits = digits[:2]
+                qvar.set(digits)
+
+            qty_var.trace_add("write", enforce_qty)
+
             cb = tk.Checkbutton(
-                inner,
+                row_frame,
                 text=f"  {item.capitalize()}",
                 variable=var,
                 font=FONTS["body_sm"],
@@ -84,22 +97,240 @@ class _CheckboxList(tk.Frame):
                 relief=tk.FLAT,
                 anchor=tk.W,
             )
-            cb.grid(row=row, column=col, sticky=tk.W, padx=8, pady=2)
+            cb.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-    def get_selected(self) -> list[str]:
-        return [item for item, var in self._vars.items() if var.get()]
+            tk.Label(
+                row_frame,
+                text="Qtd:",
+                font=FONTS["caption"],
+                bg=COLORS["bg_section"],
+                fg=COLORS["text_secondary"]
+            ).pack(side=tk.LEFT, padx=(10, 4))
 
-    def set_selected(self, items: list[str]) -> None:
-        for item, var in self._vars.items():
-            var.set(item in items)
+            qty_entry = ttk.Entry(
+                row_frame,
+                textvariable=qty_var,
+                font=FONTS["body_sm"],
+                width=5,
+                state=tk.DISABLED
+            )
+            qty_entry.pack(side=tk.LEFT)
+
+            def make_toggle_callback(item_name, entry_ctrl, check_var):
+                def on_toggle():
+                    if check_var.get():
+                        entry_ctrl.configure(state=tk.NORMAL)
+                    else:
+                        entry_ctrl.configure(state=tk.DISABLED)
+                return on_toggle
+
+            cb.configure(command=make_toggle_callback(item, qty_entry, var))
+
+            self._entries[item] = (var, qty_var, qty_entry, cb)
+
+    def get_selected(self) -> list[dict]:
+        selected = []
+        for item, (var, qty_var, _, _) in self._entries.items():
+            if var.get():
+                try:
+                    qty = int(qty_var.get())
+                except ValueError:
+                    qty = 1
+                selected.append({
+                    "name": item,
+                    "quantity": qty
+                })
+        return selected
+
+    def set_selected(self, items: list) -> None:
+        self.reset()
+        for it in items:
+            if isinstance(it, dict):
+                name = it.get("weapon") or it.get("equipment") or it.get("name")
+                qty = it.get("quantity", 1)
+            elif hasattr(it, "weapon"):
+                name = it.weapon
+                qty = it.quantity
+            elif hasattr(it, "equipment"):
+                name = it.equipment
+                qty = it.quantity
+            else:
+                name = str(it)
+                qty = 1
+
+            if name in self._entries:
+                var, qty_var, qty_entry, _ = self._entries[name]
+                var.set(True)
+                qty_var.set(str(qty))
+                qty_entry.configure(state=tk.NORMAL)
 
     def reset(self) -> None:
-        for var in self._vars.values():
+        for var, qty_var, qty_entry, _ in self._entries.values():
             var.set(False)
+            qty_var.set("1")
+            qty_entry.configure(state=tk.DISABLED)
+
+
+class _RoleCheckboxList(tk.Frame):
+    """Scrollable list of roles with checkboxes, quantities (1-99), and list of officers."""
+
+    def __init__(self, parent: tk.Widget, items: list[str], height: int = 180, **kw) -> None:
+        super().__init__(parent, bg=COLORS["bg_section"], relief=tk.FLAT, **kw)
+        self._items = items
+        self._entries: dict[str, tuple[tk.BooleanVar, tk.StringVar, tk.StringVar, ttk.Entry, ttk.Entry, tk.Checkbutton]] = {}
+        self._build(items, height)
+
+    def _build(self, items: list[str], height: int) -> None:
+        canvas = tk.Canvas(
+            self, height=height, bg=COLORS["bg_section"],
+            highlightthickness=1, highlightbackground=COLORS["border"],
+        )
+        vsb = ttk.Scrollbar(self, orient=tk.VERTICAL, command=canvas.yview)
+        inner = tk.Frame(canvas, bg=COLORS["bg_section"])
+
+        inner.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+        canvas.create_window((0, 0), window=inner, anchor=tk.NW)
+        canvas.configure(yscrollcommand=vsb.set)
+
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        canvas.bind("<MouseWheel>", lambda e: canvas.yview_scroll(-1 * (e.delta // 120), "units"))
+
+        for item in items:
+            row_frame = tk.Frame(inner, bg=COLORS["bg_section"])
+            row_frame.pack(fill=tk.X, expand=True, padx=8, pady=4)
+
+            var = tk.BooleanVar(value=False)
+            qty_var = tk.StringVar(value="1")
+            officers_var = tk.StringVar(value="")
+
+            def enforce_qty(*args, qvar=qty_var):
+                val = qvar.get()
+                digits = "".join(c for c in val if c.isdigit())
+                if len(digits) > 2:
+                    digits = digits[:2]
+                qvar.set(digits)
+
+            qty_var.trace_add("write", enforce_qty)
+
+            cb = tk.Checkbutton(
+                row_frame,
+                text=f"  {item.capitalize()}",
+                variable=var,
+                font=FONTS["body_sm"],
+                bg=COLORS["bg_section"],
+                fg=COLORS["text_primary"],
+                activebackground=COLORS["bg_section"],
+                selectcolor=COLORS["bg_section"],
+                relief=tk.FLAT,
+                anchor=tk.W,
+                width=16
+            )
+            cb.pack(side=tk.LEFT)
+
+            tk.Label(
+                row_frame,
+                text="Qtd:",
+                font=FONTS["caption"],
+                bg=COLORS["bg_section"],
+                fg=COLORS["text_secondary"]
+            ).pack(side=tk.LEFT, padx=(6, 2))
+
+            qty_entry = ttk.Entry(
+                row_frame,
+                textvariable=qty_var,
+                font=FONTS["body_sm"],
+                width=4,
+                state=tk.DISABLED
+            )
+            qty_entry.pack(side=tk.LEFT)
+
+            tk.Label(
+                row_frame,
+                text="Policiais:",
+                font=FONTS["caption"],
+                bg=COLORS["bg_section"],
+                fg=COLORS["text_secondary"]
+            ).pack(side=tk.LEFT, padx=(10, 2))
+
+            officers_entry = ttk.Entry(
+                row_frame,
+                textvariable=officers_var,
+                font=FONTS["body_sm"],
+                width=35,
+                state=tk.DISABLED
+            )
+            officers_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+
+            def make_toggle_callback(q_ctrl, o_ctrl, check_var):
+                def on_toggle():
+                    state = tk.NORMAL if check_var.get() else tk.DISABLED
+                    q_ctrl.configure(state=state)
+                    o_ctrl.configure(state=state)
+                return on_toggle
+
+            cb.configure(command=make_toggle_callback(qty_entry, officers_entry, var))
+
+            self._entries[item] = (var, qty_var, officers_var, qty_entry, officers_entry, cb)
+
+    def get_selected(self) -> list[dict]:
+        selected = []
+        for item, (var, qty_var, officers_var, _, _, _) in self._entries.items():
+            if var.get():
+                try:
+                    qty = int(qty_var.get())
+                except ValueError:
+                    qty = 1
+                
+                raw_names = officers_var.get().split(",")
+                officers = [name.strip() for name in raw_names if name.strip()]
+                
+                selected.append({
+                    "role": item,
+                    "quantity": qty,
+                    "officers": officers
+                })
+        return selected
+
+    def set_selected(self, items: list) -> None:
+        self.reset()
+        for it in items:
+            if isinstance(it, dict):
+                role = it.get("role") or it.get("name")
+                qty = it.get("quantity", 1)
+                officers = it.get("officers", [])
+            elif hasattr(it, "role"):
+                role = it.role
+                qty = it.quantity
+                officers = it.officers
+            else:
+                role = str(it)
+                qty = 1
+                officers = ["Policial Legado"]
+
+            if role in self._entries:
+                var, qty_var, officers_var, q_entry, o_entry, _ = self._entries[role]
+                var.set(True)
+                qty_var.set(str(qty))
+                officers_var.set(", ".join(officers))
+                q_entry.configure(state=tk.NORMAL)
+                o_entry.configure(state=tk.NORMAL)
+
+    def reset(self) -> None:
+        for var, qty_var, officers_var, q_entry, o_entry, _ in self._entries.values():
+            var.set(False)
+            qty_var.set("1")
+            officers_var.set("")
+            q_entry.configure(state=tk.DISABLED)
+            o_entry.configure(state=tk.DISABLED)
 
 
 class _VehicleList(tk.Frame):
-    """Widget for adding/removing vehicles with name + armored flag."""
+    """Widget for adding/removing vehicles with brand, model, plate, armored."""
 
     def __init__(self, parent: tk.Widget, **kw) -> None:
         super().__init__(parent, bg=COLORS["bg_content"], **kw)
@@ -107,30 +338,75 @@ class _VehicleList(tk.Frame):
         self._build()
 
     def _build(self) -> None:
-        # ── Input row ─────────────────────────────────────────────────────────
-        input_row = tk.Frame(self, bg=COLORS["bg_content"])
-        input_row.pack(fill=tk.X, pady=(0, 6))
+        # ── Input row 1 (Brand & Model) ───────────────────────────────────────
+        row1 = tk.Frame(self, bg=COLORS["bg_content"])
+        row1.pack(fill=tk.X, pady=(0, 4))
 
         tk.Label(
-            input_row, text="Nome:", font=FONTS["body_sm"],
+            row1, text="Marca *", font=FONTS["body_sm"],
             bg=COLORS["bg_content"], fg=COLORS["text_secondary"],
-        ).pack(side=tk.LEFT, padx=(0, 4))
+            width=8, anchor=tk.W
+        ).pack(side=tk.LEFT)
 
-        self._name_var = tk.StringVar()
-        self._entry = ttk.Entry(input_row, textvariable=self._name_var, width=22)
-        self._entry.pack(side=tk.LEFT, padx=(0, 10))
-        self._entry.bind("<Return>", lambda _: self._add())
+        self._brand_var = tk.StringVar()
+        def limit_brand(*args):
+            v = self._brand_var.get()
+            if len(v) > 20:
+                self._brand_var.set(v[:20])
+        self._brand_var.trace_add("write", limit_brand)
+
+        self._brand_entry = ttk.Entry(row1, textvariable=self._brand_var, width=16)
+        self._brand_entry.pack(side=tk.LEFT, padx=(0, 15))
+
+        tk.Label(
+            row1, text="Modelo *", font=FONTS["body_sm"],
+            bg=COLORS["bg_content"], fg=COLORS["text_secondary"],
+            width=8, anchor=tk.W
+        ).pack(side=tk.LEFT)
+
+        self._model_var = tk.StringVar()
+        def limit_model(*args):
+            v = self._model_var.get()
+            if len(v) > 20:
+                self._model_var.set(v[:20])
+        self._model_var.trace_add("write", limit_model)
+
+        self._model_entry = ttk.Entry(row1, textvariable=self._model_var, width=16)
+        self._model_entry.pack(side=tk.LEFT)
+
+        # ── Input row 2 (Plate & Armored & Add Button) ────────────────────────
+        row2 = tk.Frame(self, bg=COLORS["bg_content"])
+        row2.pack(fill=tk.X, pady=(0, 8))
+
+        tk.Label(
+            row2, text="Placa *", font=FONTS["body_sm"],
+            bg=COLORS["bg_content"], fg=COLORS["text_secondary"],
+            width=8, anchor=tk.W
+        ).pack(side=tk.LEFT)
+
+        self._plate_var = tk.StringVar()
+        def format_plate(*args):
+            v = self._plate_var.get().upper()
+            clean = "".join(c for c in v if c.isalnum())
+            if len(clean) > 7:
+                clean = clean[:7]
+            self._plate_var.set(clean)
+        self._plate_var.trace_add("write", format_plate)
+
+        self._plate_entry = ttk.Entry(row2, textvariable=self._plate_var, width=16)
+        self._plate_entry.pack(side=tk.LEFT, padx=(0, 15))
+        self._plate_entry.bind("<Return>", lambda _: self._add())
 
         self._armored_var = tk.BooleanVar()
         tk.Checkbutton(
-            input_row, text="Blindada", variable=self._armored_var,
+            row2, text="Blindada", variable=self._armored_var,
             font=FONTS["body_sm"], bg=COLORS["bg_content"],
             fg=COLORS["text_primary"], activebackground=COLORS["bg_content"],
             selectcolor=COLORS["bg_content"], relief=tk.FLAT,
-        ).pack(side=tk.LEFT, padx=(0, 10))
+        ).pack(side=tk.LEFT, padx=(0, 15))
 
         ttk.Button(
-            input_row, text="+ Adicionar",
+            row2, text="+ Adicionar",
             command=self._add, bootstyle="outline-primary", width=12,
         ).pack(side=tk.LEFT)
 
@@ -138,11 +414,15 @@ class _VehicleList(tk.Frame):
         tree_frame = tk.Frame(self, bg=COLORS["bg_content"])
         tree_frame.pack(fill=tk.BOTH, expand=True)
 
-        cols = ("nome", "blindada")
+        cols = ("marca", "modelo", "placa", "blindada")
         self._tree = ttk.Treeview(tree_frame, columns=cols, show="headings", height=5)
-        self._tree.heading("nome", text="Nome da Viatura")
+        self._tree.heading("marca", text="Marca")
+        self._tree.heading("modelo", text="Modelo")
+        self._tree.heading("placa", text="Placa")
         self._tree.heading("blindada", text="Blindada")
-        self._tree.column("nome", width=240, anchor=tk.W)
+        self._tree.column("marca", width=120, anchor=tk.W)
+        self._tree.column("modelo", width=140, anchor=tk.W)
+        self._tree.column("placa", width=100, anchor=tk.CENTER)
         self._tree.column("blindada", width=80, anchor=tk.CENTER)
 
         vsb = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self._tree.yview)
@@ -157,16 +437,49 @@ class _VehicleList(tk.Frame):
         ).pack(anchor=tk.E, pady=(4, 0))
 
     def _add(self) -> None:
-        name = self._name_var.get().strip()
-        if not name:
-            messagebox.showwarning("Atenção", "Informe o nome da viatura.", parent=self)
-            return
+        brand = self._brand_var.get().strip()
+        model = self._model_var.get().strip()
+        plate = self._plate_var.get().strip().upper()
         armored = self._armored_var.get()
-        self._vehicles.append({"name": name, "armored": armored})
-        self._tree.insert("", tk.END, values=(name, "Sim" if armored else "Não"))
-        self._name_var.set("")
+
+        if not brand:
+            messagebox.showwarning("Atenção", "Informe a marca da viatura.", parent=self)
+            return
+        if not model:
+            messagebox.showwarning("Atenção", "Informe o modelo da viatura.", parent=self)
+            return
+        if not plate:
+            messagebox.showwarning("Atenção", "Informe a placa da viatura.", parent=self)
+            return
+
+        # Validation Regex (ABC1234 or ABC1D23)
+        plate_regex = re.compile(r"^[A-Z]{3}\d[A-Z0-9]\d{2}$")
+        if not plate_regex.match(plate):
+            messagebox.showwarning(
+                "Atenção",
+                "Formato de placa inválido. Exemplos aceitos:\n- ABC1234 (antigo)\n- ABC1D23 (Mercosul)",
+                parent=self
+            )
+            return
+
+        # Check duplicate plates locally
+        for v in self._vehicles:
+            if v["plate"].upper() == plate:
+                messagebox.showwarning("Atenção", f"A placa '{plate}' já foi adicionada.", parent=self)
+                return
+
+        self._vehicles.append({
+            "brand": brand,
+            "model": model,
+            "plate": plate,
+            "armored": armored
+        })
+        self._tree.insert("", tk.END, values=(brand, model, plate, "Sim" if armored else "Não"))
+        self._brand_var.set("")
+        self._model_var.set("")
+        self._plate_var.set("")
         self._armored_var.set(False)
-        self._entry.focus()
+        self._brand_entry.focus()
 
     def _remove(self) -> None:
         selected = self._tree.selection()
@@ -181,20 +494,38 @@ class _VehicleList(tk.Frame):
     def get_vehicles(self) -> list[dict]:
         return list(self._vehicles)
 
-    def set_vehicles(self, vehicles: list[dict]) -> None:
+    def set_vehicles(self, vehicles: list) -> None:
         self._vehicles = []
         for iid in self._tree.get_children():
             self._tree.delete(iid)
         for v in vehicles:
-            entry = {"name": v["name"], "armored": bool(v.get("armored", False))}
+            if isinstance(v, dict):
+                brand = v.get("brand", "")
+                model = v.get("model", "")
+                plate = v.get("plate", "")
+                armored = bool(v.get("armored", False))
+            else:
+                brand = getattr(v, "brand", "")
+                model = getattr(v, "model", getattr(v, "name", ""))
+                plate = getattr(v, "plate", "")
+                armored = getattr(v, "armored", False)
+
+            entry = {
+                "brand": brand,
+                "model": model,
+                "plate": plate,
+                "armored": armored
+            }
             self._vehicles.append(entry)
-            self._tree.insert("", tk.END, values=(v["name"], "Sim" if v.get("armored") else "Não"))
+            self._tree.insert("", tk.END, values=(brand, model, plate, "Sim" if armored else "Não"))
 
     def reset(self) -> None:
         self._vehicles = []
         for iid in self._tree.get_children():
             self._tree.delete(iid)
-        self._name_var.set("")
+        self._brand_var.set("")
+        self._model_var.set("")
+        self._plate_var.set("")
         self._armored_var.set(False)
 
 
@@ -221,11 +552,11 @@ class OperationFormScreen(tk.Toplevel):
         self._edit_mode = operation is not None
         self._current_type: str = ""
 
-        # ── Widget references (built in _build_form) ──────────────────────────
-        self._weapon_list: Optional[_CheckboxList] = None
+        # ── Widget references ─────────────────────────────────────────────────
+        self._weapon_list: Optional[_CheckboxQuantityList] = None
         self._vehicle_list: Optional[_VehicleList] = None
-        self._role_list: Optional[_CheckboxList] = None
-        self._equip_list: Optional[_CheckboxList] = None
+        self._role_list: Optional[_RoleCheckboxList] = None
+        self._equip_list: Optional[_CheckboxQuantityList] = None
         self._dynamic_frame: Optional[tk.Frame] = None
 
         self._setup_window()
@@ -278,7 +609,7 @@ class OperationFormScreen(tk.Toplevel):
         self._dynamic_outer = tk.Frame(inner, bg=COLORS["bg_content"])
         self._dynamic_outer.pack(fill=tk.X, padx=20, pady=(12, 0))
 
-        # ── Bottom buttons ─────────────────────────────────────────────────────
+        # ── Bottom buttons ────────────────────────────────────────────────────
         self._build_buttons(inner)
 
     def _card(self, parent: tk.Widget, title: str) -> tk.Frame:
@@ -317,6 +648,12 @@ class OperationFormScreen(tk.Toplevel):
 
         # Name
         self._name_var = tk.StringVar()
+        def limit_name(*args):
+            v = self._name_var.get()
+            if len(v) > 150:
+                self._name_var.set(v[:150])
+        self._name_var.trace_add("write", limit_name)
+
         field_row("Nome *", lambda p: ttk.Entry(p, textvariable=self._name_var, font=FONTS["body_sm"]).pack(
             side=tk.LEFT, fill=tk.X, expand=True,
         ))
@@ -335,6 +672,12 @@ class OperationFormScreen(tk.Toplevel):
 
         # Location
         self._location_var = tk.StringVar()
+        def limit_location(*args):
+            v = self._location_var.get()
+            if len(v) > 150:
+                self._location_var.set(v[:150])
+        self._location_var.trace_add("write", limit_location)
+
         field_row("Localização *", lambda p: ttk.Entry(p, textvariable=self._location_var, font=FONTS["body_sm"]).pack(
             side=tk.LEFT, fill=tk.X, expand=True,
         ))
@@ -347,8 +690,10 @@ class OperationFormScreen(tk.Toplevel):
             font=FONTS["label_bold"], bg=COLORS["bg_content"],
             fg=COLORS["text_secondary"],
         ).pack(side=tk.LEFT)
+        
         desc_inner = tk.Frame(desc_row, bg=COLORS["bg_content"])
         desc_inner.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
         self._desc_text = tk.Text(
             desc_inner, height=3, font=FONTS["body_sm"],
             relief=tk.FLAT, bd=1, wrap=tk.WORD,
@@ -360,6 +705,13 @@ class OperationFormScreen(tk.Toplevel):
             highlightcolor=COLORS["border_focus"],
         )
         self._desc_text.pack(fill=tk.X)
+
+        # Description length limit trace (500 characters)
+        def limit_desc(event):
+            content = self._desc_text.get("1.0", "end-1c")
+            if len(content) > 500:
+                self._desc_text.delete("1.0 + 500 chars", tk.END)
+        self._desc_text.bind("<KeyRelease>", limit_desc)
 
     def _build_buttons(self, parent: tk.Widget) -> None:
         btn_frame = tk.Frame(parent, bg=COLORS["bg_content"], pady=16)
@@ -434,21 +786,21 @@ class OperationFormScreen(tk.Toplevel):
         tk.Frame(parent, bg=COLORS["border"], height=1).pack(fill=tk.X, pady=(0, 6))
 
     def _build_ostensive_section(self, parent: tk.Frame) -> None:
-        self._section_title(parent, "🔫 Armamentos", "(mín. 1)")
-        self._weapon_list = _CheckboxList(parent, VALID_WEAPONS)
+        self._section_title(parent, "🔫 Armamentos", "(mín. 1, quantidade 1-99)")
+        self._weapon_list = _CheckboxQuantityList(parent, VALID_WEAPONS)
         self._weapon_list.pack(fill=tk.X, pady=(0, 8))
 
-        self._section_title(parent, "🚗 Viaturas", "(mín. 1)")
+        self._section_title(parent, "🚗 Viaturas", "(mín. 1, placa Mercosul/antiga única)")
         self._vehicle_list = _VehicleList(parent)
         self._vehicle_list.pack(fill=tk.X, pady=(0, 8))
 
-        self._section_title(parent, "👮 Cargos", "(mín. 1)")
-        self._role_list = _CheckboxList(parent, VALID_ROLES)
+        self._section_title(parent, "👮 Cargos", "(mín. 1, quantidade = policiais)")
+        self._role_list = _RoleCheckboxList(parent, VALID_ROLES)
         self._role_list.pack(fill=tk.X)
 
     def _build_investigative_section(self, parent: tk.Frame) -> None:
         # Fixed pistol notice
-        self._section_title(parent, "🔫 Armamento", "(somente pistola)")
+        self._section_title(parent, "🔫 Armamento", "(somente pistola, quantidade padrão 1)")
         notice = tk.Frame(
             parent, bg="#FEF3C7",
             highlightthickness=1, highlightbackground="#F59E0B",
@@ -462,25 +814,25 @@ class OperationFormScreen(tk.Toplevel):
             padx=12, pady=8, wraplength=560, justify=tk.LEFT,
         ).pack(fill=tk.X)
 
-        self._section_title(parent, "🔬 Equipamentos Investigativos", "(mín. 1)")
-        self._equip_list = _CheckboxList(parent, VALID_EQUIPMENTS)
+        self._section_title(parent, "🔬 Equipamentos Investigativos", "(mín. 1, quantidade 1-99)")
+        self._equip_list = _CheckboxQuantityList(parent, VALID_EQUIPMENTS)
         self._equip_list.pack(fill=tk.X, pady=(0, 8))
 
-        self._section_title(parent, "👮 Cargos", "(mín. 1)")
-        self._role_list = _CheckboxList(parent, VALID_ROLES)
+        self._section_title(parent, "👮 Cargos", "(mín. 1, quantidade = policiais)")
+        self._role_list = _RoleCheckboxList(parent, VALID_ROLES)
         self._role_list.pack(fill=tk.X)
 
     def _build_tactical_section(self, parent: tk.Frame) -> None:
-        self._section_title(parent, "🔫 Armamentos", "(mín. 5)")
-        self._weapon_list = _CheckboxList(parent, VALID_WEAPONS)
+        self._section_title(parent, "🔫 Armamentos", "(mín. 5, quantidade 1-99)")
+        self._weapon_list = _CheckboxQuantityList(parent, VALID_WEAPONS)
         self._weapon_list.pack(fill=tk.X, pady=(0, 8))
 
-        self._section_title(parent, "🚗 Viaturas", "(mín. 2)")
+        self._section_title(parent, "🚗 Viaturas", "(mín. 2, placa Mercosul/antiga única)")
         self._vehicle_list = _VehicleList(parent)
         self._vehicle_list.pack(fill=tk.X, pady=(0, 8))
 
-        self._section_title(parent, "👮 Cargos", "(mín. 5)")
-        self._role_list = _CheckboxList(parent, VALID_ROLES)
+        self._section_title(parent, "👮 Cargos", "(mín. 5, quantidade = policiais)")
+        self._role_list = _RoleCheckboxList(parent, VALID_ROLES)
         self._role_list.pack(fill=tk.X)
 
     # ── Populate (edit mode) ──────────────────────────────────────────────────
@@ -505,9 +857,7 @@ class OperationFormScreen(tk.Toplevel):
             if self._weapon_list:
                 self._weapon_list.set_selected(op.weapons)
             if self._vehicle_list:
-                self._vehicle_list.set_vehicles(
-                    [{"name": v.name, "armored": v.armored} for v in op.vehicles]
-                )
+                self._vehicle_list.set_vehicles(op.vehicles)
             if self._role_list:
                 self._role_list.set_selected(op.roles)
             if self._equip_list:
@@ -531,19 +881,101 @@ class OperationFormScreen(tk.Toplevel):
             dialogs.show_warning(self, "O campo Localização é obrigatório.")
             return None
 
-        weapons: list[str] = []
+        weapons: list[dict] = []
         vehicles: list[dict] = []
-        roles: list[str] = []
-        equipments: list[str] = []
+        roles: list[dict] = []
+        equipments: list[dict] = []
 
         if op_type == "INVESTIGATIVE":
-            weapons = ["pistola"]
-            equipments = self._equip_list.get_selected() if self._equip_list else []
+            # Default weapon for investigative is pistol with quantity 1
+            weapons = [{"weapon": "pistola", "quantity": 1}]
+            raw_equip = self._equip_list.get_selected() if self._equip_list else []
+            equipments = [{"equipment": eq["name"], "quantity": eq["quantity"]} for eq in raw_equip]
             roles = self._role_list.get_selected() if self._role_list else []
         else:
-            weapons = self._weapon_list.get_selected() if self._weapon_list else []
+            raw_weap = self._weapon_list.get_selected() if self._weapon_list else []
+            weapons = [{"weapon": w["name"], "quantity": w["quantity"]} for w in raw_weap]
             vehicles = self._vehicle_list.get_vehicles() if self._vehicle_list else []
             roles = self._role_list.get_selected() if self._role_list else []
+
+        # Validate Weapons quantity in frontend: 1 to 99
+        for w in weapons:
+            qty = w["quantity"]
+            if qty < 1 or qty > 99:
+                dialogs.show_warning(self, f"A quantidade do armamento '{w['weapon'].capitalize()}' deve estar entre 1 e 99.")
+                return None
+
+        # Validate Equipments quantity: 1 to 99
+        for e in equipments:
+            qty = e["quantity"]
+            if qty < 1 or qty > 99:
+                dialogs.show_warning(self, f"A quantidade do equipamento '{e['equipment'].capitalize()}' deve estar entre 1 e 99.")
+                return None
+
+        # Validate Roles quantity and officers count in frontend
+        for r in roles:
+            role_name = r["role"]
+            qty = r["quantity"]
+            officers = r["officers"]
+            
+            if qty < 1 or qty > 99:
+                dialogs.show_warning(self, f"A quantidade do cargo '{role_name.capitalize()}' deve estar entre 1 e 99.")
+                return None
+            
+            if len(officers) != qty:
+                dialogs.show_warning(
+                    self, 
+                    f"No cargo '{role_name.capitalize()}', a quantidade informada ({qty}) é diferente do número de policiais cadastrados ({len(officers)})."
+                )
+                return None
+            
+            for officer in officers:
+                if not officer.strip():
+                    dialogs.show_warning(self, f"O nome de cada policial no cargo '{role_name.capitalize()}' é obrigatório.")
+                    return None
+                if len(officer) > 150:
+                    dialogs.show_warning(self, f"O nome do policial '{officer}' no cargo '{role_name.capitalize()}' excede 150 caracteres.")
+                    return None
+
+        # Check vehicles plate uniqueness inside the list (though local add does it, just in case)
+        plates = [v["plate"].upper() for v in vehicles]
+        if len(plates) != len(set(plates)):
+            dialogs.show_warning(self, "Placas duplicadas detectadas nas viaturas.")
+            return None
+
+        # Business validations:
+        # OSTENSIVE: min 1 vehicle, min 1 weapon, min 1 role
+        if op_type == "OSTENSIVE":
+            if not vehicles:
+                dialogs.show_warning(self, "Uma operação ostensiva deve possuir ao menos 1 viatura.")
+                return None
+            if not weapons:
+                dialogs.show_warning(self, "Uma operação ostensiva deve possuir ao menos 1 armamento.")
+                return None
+            if not roles:
+                dialogs.show_warning(self, "Uma operação ostensiva deve possuir ao menos 1 cargo.")
+                return None
+                
+        # INVESTIGATIVE: min 1 weapon (pistola), min 1 equipment, min 1 role
+        elif op_type == "INVESTIGATIVE":
+            if not equipments:
+                dialogs.show_warning(self, "Uma operação investigativa deve possuir ao menos 1 equipamento investigativo.")
+                return None
+            if not roles:
+                dialogs.show_warning(self, "Uma operação investigativa deve possuir ao menos 1 cargo.")
+                return None
+
+        # TACTICAL: min 2 vehicles, min 5 weapons (unique types), min 5 roles (unique types)
+        elif op_type == "TACTICAL":
+            if len(vehicles) < 2:
+                dialogs.show_warning(self, "Uma operação de forças táticas e especiais deve possuir ao menos 2 viaturas.")
+                return None
+            if len(weapons) < 5:
+                dialogs.show_warning(self, "Uma operação de forças táticas e especiais deve possuir ao menos 5 armamentos.")
+                return None
+            if len(roles) < 5:
+                dialogs.show_warning(self, "Uma operação de forças táticas e especiais deve possuir ao menos 5 cargos.")
+                return None
 
         return {
             "name": name,

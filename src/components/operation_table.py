@@ -11,11 +11,12 @@ class OperationTable(tk.Frame):
     Internal IDs are stored in a hidden iid-to-id map and never shown.
     """
 
-    COLUMNS: tuple = ("name", "type", "location", "created_at")
+    COLUMNS: tuple = ("number", "name", "type", "location", "created_at")
     COLUMN_CONFIG: dict = {
-        "name":       {"text": "Nome da Operação",  "width": 280, "anchor": tk.W},
-        "type":       {"text": "Tipo",               "width": 170, "anchor": tk.W},
-        "location":   {"text": "Localização",        "width": 200, "anchor": tk.W},
+        "number":     {"text": "Nº Operação",        "width": 120, "anchor": tk.CENTER},
+        "name":       {"text": "Nome da Operação",  "width": 240, "anchor": tk.W},
+        "type":       {"text": "Tipo",               "width": 150, "anchor": tk.W},
+        "location":   {"text": "Localização",        "width": 180, "anchor": tk.W},
         "created_at": {"text": "Data de Criação",    "width": 140, "anchor": tk.CENTER},
     }
 
@@ -116,6 +117,7 @@ class OperationTable(tk.Frame):
                 "",
                 tk.END,
                 values=(
+                    op.get("operation_number", "") or "—",
                     op.get("name", ""),
                     format_operation_type(op.get("operation_type", "")),
                     op.get("location", ""),
@@ -144,7 +146,7 @@ class OperationTable(tk.Frame):
         if not selected:
             return None
         values = self._tree.item(selected[0], "values")
-        return values[0] if values else None
+        return values[1] if values and len(values) > 1 else None
 
     def clear_selection(self) -> None:
         for iid in self._tree.selection():

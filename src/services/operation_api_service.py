@@ -88,11 +88,16 @@ class OperationApiService:
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
-    def get_all(self) -> list[dict]:
-        """GET /operations → list of operation dicts."""
-        response = self._request("GET", "/operations")
+    def get_all(self, page: int = 1, page_size: int = 20, search: str = "") -> dict:
+        """GET /operations?page=x&page_size=y&search=z → pagination dict."""
+        params = {
+            "page": page,
+            "page_size": page_size,
+            "search": search
+        }
+        response = self._request("GET", "/operations", params=params)
         data = self._parse(response)
-        return data.get("data") or []
+        return data.get("data") or {}
 
     def get_by_id(self, operation_id: int) -> dict:
         """GET /operations/{id} → single operation dict."""

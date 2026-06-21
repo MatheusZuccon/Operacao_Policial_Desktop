@@ -33,6 +33,10 @@ class OperationListScreen(tk.Frame):
         self._report_svc: Optional[ReportService] = None
         self._selected_id: Optional[int] = None
 
+        self._page = 1
+        self._page_size = 20
+        self._total_pages = 1
+
         self._build()
         self._loading = LoadingOverlay(self)
         self.after(100, self._load_operations)  # Initial load after render
@@ -48,6 +52,9 @@ class OperationListScreen(tk.Frame):
 
         # ── Table ─────────────────────────────────────────────────────────────
         self._build_table()
+
+        # ── Pagination (bottom, above actions) ────────────────────────────────
+        self._build_pagination()
 
         # ── Action buttons ────────────────────────────────────────────────────
         self._build_action_bar()
@@ -98,13 +105,51 @@ class OperationListScreen(tk.Frame):
         toolbar = tk.Frame(self, bg=COLORS["bg_content"], padx=20, pady=10)
         toolbar.pack(fill=tk.X)
 
+        # Search label
+        tk.Label(
+            toolbar,
+            text="Buscar:",
+            font=FONTS["heading_sm"],
+            bg=COLORS["bg_content"],
+            fg=COLORS["text_primary"],
+        ).pack(side=tk.LEFT, padx=(0, 6))
+
+        # Search Entry
+        self._search_var = tk.StringVar(value="")
+        self._search_entry = ttk.Entry(
+            toolbar,
+            textvariable=self._search_var,
+            font=FONTS["body_md"],
+            width=30,
+        )
+        self._search_entry.pack(side=tk.LEFT, padx=(0, 10))
+        self._search_entry.bind("<Return>", lambda e: self._on_search())
+
+        # Search button
+        ttk.Button(
+            toolbar,
+            text="🔍  Pesquisar",
+            command=self._on_search,
+            bootstyle="primary-outline",
+            width=12,
+        ).pack(side=tk.LEFT, padx=(0, 6))
+
+        # Clear filter button
+        ttk.Button(
+            toolbar,
+            text="Limpar",
+            command=self._on_clear_filter,
+            bootstyle="secondary-outline",
+            width=10,
+        ).pack(side=tk.LEFT, padx=(0, 10))
+
         # Refresh button
         ttk.Button(
             toolbar,
             text="🔄  Atualizar",
             command=self._load_operations,
-            bootstyle="secondary-outline",
-            width=14,
+            bootstyle="secondary",
+            width=12,
         ).pack(side=tk.LEFT)
 
         # Counter label (right-aligned)
@@ -129,6 +174,65 @@ class OperationListScreen(tk.Frame):
             on_double_click=self._open_details,
         )
         self._table.pack(fill=tk.BOTH, expand=True)
+
+    def _build_pagination(self) -> None:
+        self._pagination_frame = tk.Frame(self, bg=COLORS["bg_content"], padx=20, pady=10)
+        self._pagination_frame.pack(fill=tk.X, side=tk.BOTTOM)
+
+        # Separator above pagination
+        tk.Frame(self._pagination_frame, bg=COLORS["border"], height=1).pack(fill=tk.X, pady=(0, 10))
+
+        center_frame = tk.Frame(self._pagination_frame, bg=COLORS["bg_content"])
+        center_frame.pack(anchor=tk.CENTER)
+
+        self._btn_prev = ttk.Button(
+            center_frame,
+            text="◀  Anterior",
+            command=self._prev_page,
+            bootstyle="secondary-outline",
+            width=12,
+            state=tk.DISABLED,
+        )
+        self._btn_prev.pack(side=tk.LEFT, padx=10)
+
+        self._page_label_var = tk.StringVar(value="Página 1 de 1")
+        self._page_label = tk.Label(
+            center_frame,
+            textvariable=self._page_label_var,
+            font=FONTS["label_bold"],
+            bg=COLORS["bg_content"],
+            fg=COLORS["text_primary"],
+        )
+        self._page_label.pack(side=tk.LEFT, padx=20)
+
+        self._btn_next = ttk.Button(
+            center_frame,
+            text="Próxima  ▶",
+            command=self._next_page,
+            bootstyle="secondary-outline",
+            width=12,
+            state=tk.DISABLED,
+        )
+        self._btn_next.pack(side=tk.LEFT, padx=10)
+
+    def _prev_page(self) -> None:
+        if self._page > 1:
+            self._page -= 1
+            self._load_operations()
+
+    def _next_page(self) -> None:
+        if self._page < self._total_pages:
+            self._page += 1
+            self._load_operations()
+
+    def _on_search(self) -> None:
+        self._page = 1
+        self._load_operations()
+
+    def _on_clear_filter(self) -> None:
+        self._search_var.set("")
+        self._page = 1
+        self._load_operations()
 
     def _build_action_bar(self) -> None:
         action_frame = tk.Frame(
@@ -190,10 +294,14 @@ class OperationListScreen(tk.Frame):
         self._loading.show("Carregando operações…")
         self._clear_selection()
 
+        page = getattr(self, "_page", 1)
+        page_size = getattr(self, "_page_size", 20)
+        search_str = self._search_var.get() if hasattr(self, "_search_var") else ""
+
         def task():
             try:
-                ops = self._service.get_all()
-                self.after(0, lambda: self._render_operations(ops))
+                res = self._service.get_all(page=page, page_size=page_size, search=search_str)
+                self.after(0, lambda: self._render_operations(res))
             except (ApiConnectionError, ApiTimeoutError) as exc:
                 self.after(0, lambda: self._on_load_error(exc.message, connection=True))
             except (ApiServerError, ApiNotFoundError) as exc:
@@ -203,11 +311,28 @@ class OperationListScreen(tk.Frame):
 
         threading.Thread(target=task, daemon=True).start()
 
-    def _render_operations(self, ops: list[dict]) -> None:
+    def _render_operations(self, res: dict) -> None:
+        ops = res.get("items", [])
         self._table.load_data(ops)
-        count = len(ops)
-        self._count_var.set(f"{count} operação{'ões' if count != 1 else ''} encontrada{'s' if count != 1 else ''}")
-        self._set_status(f"{count} operação(ões) carregada(s).")
+
+        self._page = res.get("page", 1)
+        self._total_pages = res.get("pages", 1)
+        total_items = res.get("total", 0)
+
+        self._page_label_var.set(f"Página {self._page} de {self._total_pages}")
+
+        if self._page <= 1:
+            self._btn_prev.configure(state=tk.DISABLED)
+        else:
+            self._btn_prev.configure(state=tk.NORMAL)
+
+        if self._page >= self._total_pages:
+            self._btn_next.configure(state=tk.DISABLED)
+        else:
+            self._btn_next.configure(state=tk.NORMAL)
+
+        self._count_var.set(f"{total_items} operação{'ões' if total_items != 1 else ''} encontrada{'s' if total_items != 1 else ''}")
+        self._set_status(f"{len(ops)} operação(ões) exibida(s) de {total_items} no total.")
 
     def _on_load_error(self, message: str, connection: bool = False) -> None:
         self._set_status("Erro ao carregar dados.")
