@@ -24,6 +24,23 @@ from src.utils.constants import (
 )
 from src.utils.helpers import center_toplevel
 
+# Regex that matches strings containing at least one letter (accented included)
+_HAS_LETTER_RE = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿ]")
+
+def _validate_text_field(parent: Optional[tk.Widget], value: str, field_label: str, max_length: Optional[int] = None) -> bool:
+    """Validate a text field: min 3 chars, at least one letter, optional max length."""
+    stripped = value.strip()
+    if len(stripped) < 3:
+        dialogs.show_warning(parent, f"O campo '{field_label}' deve ter no mínimo 3 caracteres.")
+        return False
+    if not _HAS_LETTER_RE.search(stripped):
+        dialogs.show_warning(parent, f"O campo '{field_label}' não pode conter apenas números ou caracteres especiais. Informe um texto com ao menos uma letra.")
+        return False
+    if max_length is not None and len(stripped) > max_length:
+        dialogs.show_warning(parent, f"O campo '{field_label}' deve ter no máximo {max_length} caracteres.")
+        return False
+    return True
+
 
 # ── Reusable sub-widgets ──────────────────────────────────────────────────────
 
@@ -443,22 +460,25 @@ class _VehicleList(tk.Frame):
         armored = self._armored_var.get()
 
         if not brand:
-            messagebox.showwarning("Atenção", "Informe a marca da viatura.", parent=self)
+            dialogs.show_warning(self, "Informe a marca da viatura.")
+            return
+        if not _validate_text_field(self, brand, "marca da viatura", max_length=20):
             return
         if not model:
-            messagebox.showwarning("Atenção", "Informe o modelo da viatura.", parent=self)
+            dialogs.show_warning(self, "Informe o modelo da viatura.")
+            return
+        if not _validate_text_field(self, model, "modelo da viatura", max_length=20):
             return
         if not plate:
-            messagebox.showwarning("Atenção", "Informe a placa da viatura.", parent=self)
+            dialogs.show_warning(self, "Informe a placa da viatura.")
             return
 
         # Validation Regex (ABC1234 or ABC1D23)
         plate_regex = re.compile(r"^[A-Z]{3}\d[A-Z0-9]\d{2}$")
         if not plate_regex.match(plate):
-            messagebox.showwarning(
-                "Atenção",
-                "Formato de placa inválido. Exemplos aceitos:\n- ABC1234 (antigo)\n- ABC1D23 (Mercosul)",
-                parent=self
+            dialogs.show_warning(
+                self,
+                "Formato de placa inválido. Exemplos aceitos:\n- ABC1234 (antigo)\n- ABC1D23 (Mercosul)"
             )
             return
 
@@ -799,20 +819,29 @@ class OperationFormScreen(tk.Toplevel):
         self._role_list.pack(fill=tk.X)
 
     def _build_investigative_section(self, parent: tk.Frame) -> None:
-        # Fixed pistol notice
-        self._section_title(parent, "🔫 Armamento", "(somente pistola, quantidade padrão 1)")
-        notice = tk.Frame(
-            parent, bg="#FEF3C7",
-            highlightthickness=1, highlightbackground="#F59E0B",
-        )
-        notice.pack(fill=tk.X, pady=(0, 8))
+        self._section_title(parent, "🔫 Quantidade de Pistolas", "(mín. 1, quantidade 1-99)")
+        pistol_row = tk.Frame(parent, bg=COLORS["bg_content"])
+        pistol_row.pack(fill=tk.X, pady=(0, 8))
         tk.Label(
-            notice,
-            text="⚠️  Operações investigativas utilizam exclusivamente a pistola como armamento.",
-            font=FONTS["body_sm"],
-            bg="#FEF3C7", fg="#92400E",
-            padx=12, pady=8, wraplength=560, justify=tk.LEFT,
-        ).pack(fill=tk.X)
+            pistol_row, text="Pistolas *", width=14, anchor=tk.W,
+            font=FONTS["label_bold"], bg=COLORS["bg_content"],
+            fg=COLORS["text_secondary"],
+        ).pack(side=tk.LEFT)
+        self._pistol_quantity_var = tk.StringVar(value="1")
+        def limit_pistol_qty(*args):
+            v = self._pistol_quantity_var.get()
+            digits = "".join(c for c in v if c.isdigit())
+            if len(digits) > 2:
+                digits = digits[:2]
+            self._pistol_quantity_var.set(digits)
+        self._pistol_quantity_var.trace_add("write", limit_pistol_qty)
+        ttk.Entry(
+            pistol_row, textvariable=self._pistol_quantity_var, font=FONTS["body_sm"], width=10
+        ).pack(side=tk.LEFT)
+
+        self._section_title(parent, "🚗 Viaturas", "(mín. 1, placa Mercosul/antiga única)")
+        self._vehicle_list = _VehicleList(parent)
+        self._vehicle_list.pack(fill=tk.X, pady=(0, 8))
 
         self._section_title(parent, "🔬 Equipamentos Investigativos", "(mín. 1, quantidade 1-99)")
         self._equip_list = _CheckboxQuantityList(parent, VALID_EQUIPMENTS)
@@ -862,6 +891,11 @@ class OperationFormScreen(tk.Toplevel):
                 self._role_list.set_selected(op.roles)
             if self._equip_list:
                 self._equip_list.set_selected(op.investigation_equipments)
+            # Populate pistol quantity for INVESTIGATIVE
+            if op.operation_type == "INVESTIGATIVE" and op.weapons:
+                pistol = next((w for w in op.weapons if w.weapon == "pistola"), None)
+                if pistol:
+                    self._pistol_quantity_var.set(str(pistol.quantity))
 
     # ── Collect + submit ──────────────────────────────────────────────────────
 
@@ -874,11 +908,15 @@ class OperationFormScreen(tk.Toplevel):
         if not name:
             dialogs.show_warning(self, "O campo Nome é obrigatório.")
             return None
+        if not _validate_text_field(self, name, "nome da operação", max_length=150):
+            return None
         if not op_type:
             dialogs.show_warning(self, "Selecione um Tipo de Operação.")
             return None
         if not location:
             dialogs.show_warning(self, "O campo Localização é obrigatório.")
+            return None
+        if not _validate_text_field(self, location, "localização", max_length=150):
             return None
 
         weapons: list[dict] = []
@@ -887,10 +925,16 @@ class OperationFormScreen(tk.Toplevel):
         equipments: list[dict] = []
 
         if op_type == "INVESTIGATIVE":
-            # Default weapon for investigative is pistol with quantity 1
-            weapons = [{"weapon": "pistola", "quantity": 1}]
+            # Get pistol quantity from input
+            pistol_qty_str = self._pistol_quantity_var.get()
+            try:
+                pistol_qty = int(pistol_qty_str)
+            except ValueError:
+                pistol_qty = 0
+            weapons = [{"weapon": "pistola", "quantity": pistol_qty}]
             raw_equip = self._equip_list.get_selected() if self._equip_list else []
             equipments = [{"equipment": eq["name"], "quantity": eq["quantity"]} for eq in raw_equip]
+            vehicles = self._vehicle_list.get_vehicles() if self._vehicle_list else []
             roles = self._role_list.get_selected() if self._role_list else []
         else:
             raw_weap = self._weapon_list.get_selected() if self._weapon_list else []
@@ -933,8 +977,7 @@ class OperationFormScreen(tk.Toplevel):
                 if not officer.strip():
                     dialogs.show_warning(self, f"O nome de cada policial no cargo '{role_name.capitalize()}' é obrigatório.")
                     return None
-                if len(officer) > 150:
-                    dialogs.show_warning(self, f"O nome do policial '{officer}' no cargo '{role_name.capitalize()}' excede 150 caracteres.")
+                if not _validate_text_field(self, officer, f"policial no cargo '{role_name.capitalize()}'", max_length=150):
                     return None
 
         # Check vehicles plate uniqueness inside the list (though local add does it, just in case)
@@ -956,8 +999,11 @@ class OperationFormScreen(tk.Toplevel):
                 dialogs.show_warning(self, "Uma operação ostensiva deve possuir ao menos 1 cargo.")
                 return None
                 
-        # INVESTIGATIVE: min 1 weapon (pistola), min 1 equipment, min 1 role
+        # INVESTIGATIVE: min 1 weapon (pistola), min 1 vehicle, min 1 equipment, min 1 role
         elif op_type == "INVESTIGATIVE":
+            if not vehicles:
+                dialogs.show_warning(self, "Uma operação investigativa deve possuir ao menos 1 viatura.")
+                return None
             if not equipments:
                 dialogs.show_warning(self, "Uma operação investigativa deve possuir ao menos 1 equipamento investigativo.")
                 return None
