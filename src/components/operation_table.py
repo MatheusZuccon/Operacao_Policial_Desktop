@@ -13,11 +13,11 @@ class OperationTable(tk.Frame):
 
     COLUMNS: tuple = ("number", "name", "type", "location", "created_at")
     COLUMN_CONFIG: dict = {
-        "number":     {"text": "Nº Operação",        "width": 120, "anchor": tk.CENTER},
-        "name":       {"text": "Nome da Operação",  "width": 240, "anchor": tk.W},
-        "type":       {"text": "Tipo",               "width": 150, "anchor": tk.W},
-        "location":   {"text": "Localização",        "width": 180, "anchor": tk.W},
-        "created_at": {"text": "Data de Criação",    "width": 140, "anchor": tk.CENTER},
+        "number":     {"text": "Nº Operação",        "width": 120, "anchor": tk.CENTER, "api_field": "operation_number"},
+        "name":       {"text": "Nome da Operação",  "width": 240, "anchor": tk.W, "api_field": "name"},
+        "type":       {"text": "Tipo",               "width": 150, "anchor": tk.W, "api_field": "operation_type"},
+        "location":   {"text": "Localização",        "width": 180, "anchor": tk.W, "api_field": "location"},
+        "created_at": {"text": "Data de Criação",    "width": 140, "anchor": tk.CENTER, "api_field": "created_at"},
     }
 
     def __init__(
@@ -25,12 +25,16 @@ class OperationTable(tk.Frame):
         parent: tk.Widget,
         on_select: Callable[[Optional[int]], None],
         on_double_click: Callable[[int], None],
+        on_sort: Callable[[str, str], None],
         **kwargs,
     ) -> None:
         super().__init__(parent, bg=COLORS["bg_content"], **kwargs)
         self._on_select = on_select
         self._on_double_click = on_double_click
+        self._on_sort = on_sort
         self._id_map: dict[str, int] = {}  # iid → operation_id
+        self._current_sort_col: Optional[str] = None
+        self._current_sort_dir: str = "desc"
         self._build()
 
     def _build(self) -> None:
@@ -72,7 +76,7 @@ class OperationTable(tk.Frame):
         )
 
         for col, cfg in self.COLUMN_CONFIG.items():
-            self._tree.heading(col, text=cfg["text"])
+            self._tree.heading(col, text=cfg["text"], command=lambda c=col: self._on_header_click(c))
             self._tree.column(col, width=cfg["width"], anchor=cfg["anchor"], minwidth=80)
 
         # Scrollbars
@@ -101,6 +105,29 @@ class OperationTable(tk.Frame):
             fg=COLORS["text_muted"],
             justify=tk.CENTER,
         )
+
+    def _on_header_click(self, col: str) -> None:
+        """Handle header click for sorting."""
+        # Toggle direction if same column, otherwise default to desc
+        if self._current_sort_col == col:
+            self._current_sort_dir = "asc" if self._current_sort_dir == "desc" else "desc"
+        else:
+            self._current_sort_col = col
+            self._current_sort_dir = "desc"
+        
+        # Update heading texts to show sort indicator
+        for c, cfg in self.COLUMN_CONFIG.items():
+            base_text = cfg["text"]
+            if c == self._current_sort_col:
+                indicator = "↑" if self._current_sort_dir == "asc" else "↓"
+                self._tree.heading(c, text=f"{base_text} {indicator}")
+            else:
+                self._tree.heading(c, text=base_text)
+        
+        # Get the API field name
+        api_field = self.COLUMN_CONFIG[col]["api_field"]
+        # Notify parent to reload data
+        self._on_sort(api_field, self._current_sort_dir)
 
     # ── Data ──────────────────────────────────────────────────────────────────
 

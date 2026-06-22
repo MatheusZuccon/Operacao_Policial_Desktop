@@ -36,6 +36,8 @@ class OperationListScreen(tk.Frame):
         self._page = 1
         self._page_size = 20
         self._total_pages = 1
+        self._sort_by = "created_at"
+        self._sort_dir = "desc"
 
         self._build()
         self._loading = LoadingOverlay(self)
@@ -172,8 +174,16 @@ class OperationListScreen(tk.Frame):
             table_frame,
             on_select=self._on_selection_change,
             on_double_click=self._open_details,
+            on_sort=self._on_sort,
         )
         self._table.pack(fill=tk.BOTH, expand=True)
+    
+    def _on_sort(self, sort_by: str, sort_dir: str) -> None:
+        """Handle sort event from table: update state and reload."""
+        self._sort_by = sort_by
+        self._sort_dir = sort_dir
+        self._page = 1  # Reset to first page on sort change
+        self._load_operations()
 
     def _build_pagination(self) -> None:
         self._pagination_frame = tk.Frame(self, bg=COLORS["bg_content"], padx=20, pady=10)
@@ -297,10 +307,12 @@ class OperationListScreen(tk.Frame):
         page = getattr(self, "_page", 1)
         page_size = getattr(self, "_page_size", 20)
         search_str = self._search_var.get() if hasattr(self, "_search_var") else ""
+        sort_by = getattr(self, "_sort_by", "created_at")
+        sort_dir = getattr(self, "_sort_dir", "desc")
 
         def task():
             try:
-                res = self._service.get_all(page=page, page_size=page_size, search=search_str)
+                res = self._service.get_all(page=page, page_size=page_size, search=search_str, sort_by=sort_by, sort_dir=sort_dir)
                 self.after(0, lambda: self._render_operations(res))
             except (ApiConnectionError, ApiTimeoutError) as exc:
                 self.after(0, lambda: self._on_load_error(exc.message, connection=True))

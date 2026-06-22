@@ -88,12 +88,14 @@ class OperationApiService:
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
-    def get_all(self, page: int = 1, page_size: int = 20, search: str = "") -> dict:
-        """GET /operations?page=x&page_size=y&search=z → pagination dict."""
+    def get_all(self, page: int = 1, page_size: int = 20, search: str = "", sort_by: str = "created_at", sort_dir: str = "desc") -> dict:
+        """GET /operations?page=x&page_size=y&search=z&sort_by=a&sort_dir=d → pagination dict."""
         params = {
             "page": page,
             "page_size": page_size,
-            "search": search
+            "search": search,
+            "sort_by": sort_by,
+            "sort_dir": sort_dir
         }
         response = self._request("GET", "/operations", params=params)
         data = self._parse(response)

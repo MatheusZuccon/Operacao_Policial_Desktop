@@ -188,13 +188,113 @@ class _CheckboxQuantityList(tk.Frame):
             qty_entry.configure(state=tk.DISABLED)
 
 
-class _RoleCheckboxList(tk.Frame):
-    """Scrollable list of roles with checkboxes, quantities (1-99), and list of officers."""
+class _RoleOfficerList(tk.Frame):
+    """Widget for adding/removing officers for a specific role."""
 
-    def __init__(self, parent: tk.Widget, items: list[str], height: int = 180, **kw) -> None:
+    def __init__(self, parent: tk.Widget, **kw) -> None:
+        super().__init__(parent, bg=COLORS["bg_section"], **kw)
+        self._officers: list[str] = []
+        self._build()
+
+    def _build(self) -> None:
+        # Input row: officer name + add button
+        input_row = tk.Frame(self, bg=COLORS["bg_section"])
+        input_row.pack(fill=tk.X, pady=(4, 4))
+
+        tk.Label(
+            input_row,
+            text="Nome do Policial:",
+            font=FONTS["caption"],
+            bg=COLORS["bg_section"],
+            fg=COLORS["text_secondary"]
+        ).pack(side=tk.LEFT, padx=(0, 4))
+
+        self._officer_name_var = tk.StringVar()
+        self._officer_entry = ttk.Entry(input_row, textvariable=self._officer_name_var, width=30)
+        self._officer_entry.pack(side=tk.LEFT, padx=(0, 8), fill=tk.X, expand=True)
+        self._officer_entry.bind("<Return>", lambda _: self._add_officer())
+
+        ttk.Button(
+            input_row,
+            text="+ Adicionar",
+            command=self._add_officer,
+            bootstyle="outline-primary",
+            width=12
+        ).pack(side=tk.LEFT)
+
+        # Treeview to show officers
+        tree_frame = tk.Frame(self, bg=COLORS["bg_section"])
+        tree_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 4))
+
+        cols = ("nome",)
+        self._tree = ttk.Treeview(tree_frame, columns=cols, show="headings", height=3)
+        self._tree.heading("nome", text="Policiais")
+        self._tree.column("nome", width=300, anchor=tk.W)
+
+        vsb = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self._tree.yview)
+        self._tree.configure(yscrollcommand=vsb.set)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Remove button
+        ttk.Button(
+            self,
+            text="🗑 Remover Selecionado",
+            command=self._remove_officer,
+            bootstyle="outline-danger"
+        ).pack(anchor=tk.E)
+
+    def _add_officer(self) -> None:
+        name = self._officer_name_var.get().strip()
+        if not name:
+            dialogs.show_warning(self, "Informe o nome do policial.")
+            return
+        if not _validate_text_field(self, name, "nome do policial", max_length=150):
+            return
+        if name in self._officers:
+            dialogs.show_warning(self, f"O policial '{name}' já foi adicionado.")
+            return
+
+        self._officers.append(name)
+        self._tree.insert("", tk.END, values=(name,))
+        self._officer_name_var.set("")
+        self._officer_entry.focus()
+
+    def _remove_officer(self) -> None:
+        selected = self._tree.selection()
+        if not selected:
+            return
+        for item in selected:
+            idx = self._tree.index(item)
+            if 0 <= idx < len(self._officers):
+                self._officers.pop(idx)
+            self._tree.delete(item)
+
+    def get_officers(self) -> list[str]:
+        return list(self._officers)
+
+    def set_officers(self, officers: list[str]) -> None:
+        self._officers = []
+        for item in self._tree.get_children():
+            self._tree.delete(item)
+        for name in officers:
+            self._officers.append(name)
+            self._tree.insert("", tk.END, values=(name,))
+
+    def reset(self) -> None:
+        self._officers = []
+        for item in self._tree.get_children():
+            self._tree.delete(item)
+        self._officer_name_var.set("")
+
+
+class _RoleCheckboxList(tk.Frame):
+    """Scrollable list of roles with checkboxes, quantities (1-99), and officer list."""
+
+    def __init__(self, parent: tk.Widget, items: list[str], height: int = 350, **kw) -> None:
         super().__init__(parent, bg=COLORS["bg_section"], relief=tk.FLAT, **kw)
         self._items = items
-        self._entries: dict[str, tuple[tk.BooleanVar, tk.StringVar, tk.StringVar, ttk.Entry, ttk.Entry, tk.Checkbutton]] = {}
+        self._entries: dict[str, tuple[tk.BooleanVar, tk.StringVar, _RoleOfficerList, ttk.Entry, tk.Checkbutton, tk.Frame]] = {}
         self._build(items, height)
 
     def _build(self, items: list[str], height: int) -> None:
@@ -218,12 +318,15 @@ class _RoleCheckboxList(tk.Frame):
         canvas.bind("<MouseWheel>", lambda e: canvas.yview_scroll(-1 * (e.delta // 120), "units"))
 
         for item in items:
-            row_frame = tk.Frame(inner, bg=COLORS["bg_section"])
-            row_frame.pack(fill=tk.X, expand=True, padx=8, pady=4)
+            role_frame = tk.Frame(inner, bg=COLORS["bg_section"])
+            role_frame.pack(fill=tk.X, expand=True, padx=8, pady=4)
+
+            # Top row: checkbox + quantity
+            top_row = tk.Frame(role_frame, bg=COLORS["bg_section"])
+            top_row.pack(fill=tk.X)
 
             var = tk.BooleanVar(value=False)
             qty_var = tk.StringVar(value="1")
-            officers_var = tk.StringVar(value="")
 
             def enforce_qty(*args, qvar=qty_var):
                 val = qvar.get()
@@ -235,7 +338,7 @@ class _RoleCheckboxList(tk.Frame):
             qty_var.trace_add("write", enforce_qty)
 
             cb = tk.Checkbutton(
-                row_frame,
+                top_row,
                 text=f"  {item.capitalize()}",
                 variable=var,
                 font=FONTS["body_sm"],
@@ -250,7 +353,7 @@ class _RoleCheckboxList(tk.Frame):
             cb.pack(side=tk.LEFT)
 
             tk.Label(
-                row_frame,
+                top_row,
                 text="Qtd:",
                 font=FONTS["caption"],
                 bg=COLORS["bg_section"],
@@ -258,7 +361,7 @@ class _RoleCheckboxList(tk.Frame):
             ).pack(side=tk.LEFT, padx=(6, 2))
 
             qty_entry = ttk.Entry(
-                row_frame,
+                top_row,
                 textvariable=qty_var,
                 font=FONTS["body_sm"],
                 width=4,
@@ -266,45 +369,35 @@ class _RoleCheckboxList(tk.Frame):
             )
             qty_entry.pack(side=tk.LEFT)
 
-            tk.Label(
-                row_frame,
-                text="Policiais:",
-                font=FONTS["caption"],
-                bg=COLORS["bg_section"],
-                fg=COLORS["text_secondary"]
-            ).pack(side=tk.LEFT, padx=(10, 2))
-
-            officers_entry = ttk.Entry(
-                row_frame,
-                textvariable=officers_var,
-                font=FONTS["body_sm"],
-                width=35,
-                state=tk.DISABLED
-            )
-            officers_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
-
-            def make_toggle_callback(q_ctrl, o_ctrl, check_var):
+            # Officer list container (shown when checkbox is active)
+            officer_list_frame = tk.Frame(role_frame, bg=COLORS["bg_section"])
+            officer_list = _RoleOfficerList(officer_list_frame)
+            
+            def make_toggle_callback(q_ctrl, o_frame, check_var):
                 def on_toggle():
                     state = tk.NORMAL if check_var.get() else tk.DISABLED
                     q_ctrl.configure(state=state)
-                    o_ctrl.configure(state=state)
+                    if check_var.get():
+                        o_frame.pack(fill=tk.X, pady=(8, 0))
+                    else:
+                        o_frame.pack_forget()
                 return on_toggle
 
-            cb.configure(command=make_toggle_callback(qty_entry, officers_entry, var))
+            cb.configure(command=make_toggle_callback(qty_entry, officer_list_frame, var))
+            officer_list.pack(fill=tk.X, expand=True)
 
-            self._entries[item] = (var, qty_var, officers_var, qty_entry, officers_entry, cb)
+            self._entries[item] = (var, qty_var, officer_list, qty_entry, cb, officer_list_frame)
 
     def get_selected(self) -> list[dict]:
         selected = []
-        for item, (var, qty_var, officers_var, _, _, _) in self._entries.items():
+        for item, (var, qty_var, officer_list, _, _, _) in self._entries.items():
             if var.get():
                 try:
                     qty = int(qty_var.get())
                 except ValueError:
                     qty = 1
                 
-                raw_names = officers_var.get().split(",")
-                officers = [name.strip() for name in raw_names if name.strip()]
+                officers = officer_list.get_officers()
                 
                 selected.append({
                     "role": item,
@@ -330,20 +423,20 @@ class _RoleCheckboxList(tk.Frame):
                 officers = ["Policial Legado"]
 
             if role in self._entries:
-                var, qty_var, officers_var, q_entry, o_entry, _ = self._entries[role]
+                var, qty_var, officer_list, q_entry, _, officer_frame = self._entries[role]
                 var.set(True)
                 qty_var.set(str(qty))
-                officers_var.set(", ".join(officers))
+                officer_list.set_officers(officers)
                 q_entry.configure(state=tk.NORMAL)
-                o_entry.configure(state=tk.NORMAL)
+                officer_frame.pack(fill=tk.X, pady=(8, 0))
 
     def reset(self) -> None:
-        for var, qty_var, officers_var, q_entry, o_entry, _ in self._entries.values():
+        for var, qty_var, officer_list, q_entry, _, officer_frame in self._entries.values():
             var.set(False)
             qty_var.set("1")
-            officers_var.set("")
+            officer_list.reset()
             q_entry.configure(state=tk.DISABLED)
-            o_entry.configure(state=tk.DISABLED)
+            officer_frame.pack_forget()
 
 
 class _VehicleList(tk.Frame):
@@ -485,7 +578,7 @@ class _VehicleList(tk.Frame):
         # Check duplicate plates locally
         for v in self._vehicles:
             if v["plate"].upper() == plate:
-                messagebox.showwarning("Atenção", f"A placa '{plate}' já foi adicionada.", parent=self)
+                dialogs.show_warning(self, f"A placa '{plate}' já foi adicionada.")
                 return
 
         self._vehicles.append({
