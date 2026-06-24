@@ -1,18 +1,76 @@
 import os
 import platform
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from src.utils.constants import TYPE_SHORT_LABELS
 
 
 def format_datetime(iso_string: str) -> str:
-    """Format ISO datetime string to Brazilian date format."""
+    """Format ISO datetime string to Brazilian date format (SP timezone - UTC-3)."""
     if not iso_string:
         return "—"
     try:
-        clean = iso_string.split(".")[0].replace("Z", "")
-        dt = datetime.fromisoformat(clean)
-        return dt.strftime("%d/%m/%Y %H:%M")
+        # Try multiple parsing approaches
+        dt = None
+        iso_clean = iso_string.strip()
+        
+        # Approach 1: Handle 'Z' (UTC) by replacing with +00:00
+        if iso_clean.endswith("Z"):
+            modified = iso_clean[:-1] + "+00:00"
+            try:
+                dt = datetime.fromisoformat(modified)
+            except ValueError:
+                pass
+        
+        # Approach 2: Try with fractional seconds
+        if not dt and "." in iso_clean:
+            try:
+                dt = datetime.fromisoformat(iso_clean)
+            except ValueError:
+                # Remove fractional part
+                clean_no_millis = iso_clean.split(".")[0]
+                if "Z" in iso_clean:
+                    clean_no_millis = clean_no_millis.replace("Z", "+00:00")
+                try:
+                    dt = datetime.fromisoformat(clean_no_millis)
+                except ValueError:
+                    pass
+        
+        # Approach 3: Naive datetime, assume UTC
+        if not dt:
+            try:
+                clean = iso_clean.split(".")[0].replace("Z", "")
+                dt = datetime.fromisoformat(clean)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+            except ValueError:
+                pass
+        
+        # If still no dt, return original
+        if not dt:
+            return iso_string or "—"
+        
+        # Convert to Brazil/Sao_Paulo timezone (UTC-3)
+        # First, ensure dt is timezone-aware (UTC)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        
+        # Try zoneinfo/pytz first, then fall back to manual -3 hours
+        dt_brazil = None
+        try:
+            try:
+                from zoneinfo import ZoneInfo
+                brazil_tz = ZoneInfo("America/Sao_Paulo")
+                dt_brazil = dt.astimezone(brazil_tz)
+            except ImportError:
+                from pytz import timezone as pytz_timezone
+                brazil_tz = pytz_timezone("America/Sao_Paulo")
+                dt_brazil = dt.astimezone(brazil_tz)
+        except Exception:
+            # Fallback: manual subtraction of 3 hours (UTC-3)
+            dt_brazil = dt - timedelta(hours=3)
+            
+        return dt_brazil.strftime("%d/%m/%Y %H:%M")
     except (ValueError, AttributeError):
         return iso_string or "—"
 
