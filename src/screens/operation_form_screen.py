@@ -441,6 +441,24 @@ class _RoleCheckboxList(tk.Frame):
 
 class _VehicleList(tk.Frame):
     """Widget for adding/removing vehicles with brand, model, plate, armored."""
+    
+    # Brand-model mapping
+    BRAND_MODELS = {
+        "Chevrolet": ["Spin", "Trailblazer", "S10", "Onix", "Cruze"],
+        "Fiat": ["Palio Weekend", "Siena", "Grand Siena", "Toro", "Strada", "Doblò"],
+        "Ford": ["Ranger", "Focus", "Ka", "Ecosport"],
+        "Renault": ["Duster", "Logan", "Sandero", "Oroch"],
+        "Toyota": ["Hilux", "Corolla", "SW4", "Yaris"],
+        "Volkswagen": ["Gol", "Voyage", "Virtus", "Amarok", "T-Cross"],
+        "Nissan": ["Frontier", "Versa", "Sentra", "Kicks"],
+        "Mitsubishi": ["L200 Triton", "Pajero Dakar"],
+        "Jeep": ["Renegade", "Compass"],
+        "Hyundai": ["HB20", "Creta"],
+        "Citroën": ["C4 Cactus"],
+        "Peugeot": ["208", "2008"],
+        "Honda": ["Civic", "HR-V"],
+        "Outra": []
+    }
 
     def __init__(self, parent: tk.Widget, **kw) -> None:
         super().__init__(parent, bg=COLORS["bg_content"], **kw)
@@ -459,14 +477,15 @@ class _VehicleList(tk.Frame):
         ).pack(side=tk.LEFT)
 
         self._brand_var = tk.StringVar()
-        def limit_brand(*args):
-            v = self._brand_var.get()
-            if len(v) > 20:
-                self._brand_var.set(v[:20])
-        self._brand_var.trace_add("write", limit_brand)
-
-        self._brand_entry = ttk.Entry(row1, textvariable=self._brand_var, width=16)
-        self._brand_entry.pack(side=tk.LEFT, padx=(0, 15))
+        self._brand_combobox = ttk.Combobox(
+            row1, 
+            textvariable=self._brand_var, 
+            values=list(self.BRAND_MODELS.keys()), 
+            state="readonly", 
+            width=14
+        )
+        self._brand_combobox.bind("<<ComboboxSelected>>", self._on_brand_selected)
+        self._brand_combobox.pack(side=tk.LEFT, padx=(0, 15))
 
         tk.Label(
             row1, text="Modelo *", font=FONTS["body_sm"],
@@ -475,14 +494,14 @@ class _VehicleList(tk.Frame):
         ).pack(side=tk.LEFT)
 
         self._model_var = tk.StringVar()
-        def limit_model(*args):
-            v = self._model_var.get()
-            if len(v) > 20:
-                self._model_var.set(v[:20])
-        self._model_var.trace_add("write", limit_model)
-
-        self._model_entry = ttk.Entry(row1, textvariable=self._model_var, width=16)
-        self._model_entry.pack(side=tk.LEFT)
+        self._model_combobox = ttk.Combobox(
+            row1, 
+            textvariable=self._model_var, 
+            values=[], 
+            state="readonly", 
+            width=14
+        )
+        self._model_combobox.pack(side=tk.LEFT)
 
         # ── Input row 2 (Plate & Armored & Add Button) ────────────────────────
         row2 = tk.Frame(self, bg=COLORS["bg_content"])
@@ -545,6 +564,22 @@ class _VehicleList(tk.Frame):
             self, text="🗑 Remover Selecionada",
             command=self._remove, bootstyle="outline-danger",
         ).pack(anchor=tk.E, pady=(4, 0))
+        
+    def _on_brand_selected(self, event=None) -> None:
+        """Update model combobox when a brand is selected."""
+        brand = self._brand_var.get()
+        models = self.BRAND_MODELS.get(brand, [])
+        if brand == "Outra":
+            self._model_combobox["values"] = []
+            self._model_combobox["state"] = "normal"
+            self._model_var.set("")
+        else:
+            self._model_combobox["values"] = models
+            self._model_combobox["state"] = "readonly"
+            if models:
+                self._model_var.set(models[0])
+            else:
+                self._model_var.set("")
 
     def _add(self) -> None:
         brand = self._brand_var.get().strip()
@@ -590,9 +625,11 @@ class _VehicleList(tk.Frame):
         self._tree.insert("", tk.END, values=(brand, model, plate, "Sim" if armored else "Não"))
         self._brand_var.set("")
         self._model_var.set("")
+        self._model_combobox["values"] = []
+        self._model_combobox["state"] = "readonly"
         self._plate_var.set("")
         self._armored_var.set(False)
-        self._brand_entry.focus()
+        self._brand_combobox.focus()
 
     def _remove(self) -> None:
         selected = self._tree.selection()
