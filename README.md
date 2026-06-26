@@ -2,6 +2,8 @@
 
 Interface desktop moderna para o sistema **Police Operation API**, desenvolvida com Python, Tkinter e ttkbootstrap.
 
+<img width="1918" height="1020" alt="image" src="https://github.com/user-attachments/assets/f4c32774-0322-4641-99a0-8ea62f73991a" />
+
 ---
 
 ## Sumário
